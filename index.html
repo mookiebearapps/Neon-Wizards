@@ -1,0 +1,865 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Neon Wizards</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&display=swap');
+
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            background-color: #050510;
+            color: white;
+            font-family: 'Orbitron', sans-serif;
+            overflow: hidden;
+            /* touch-action: none prevents browser pull-to-refresh and swiping navigation */
+            touch-action: none; 
+            user-select: none;
+            -webkit-user-select: none;
+        }
+
+        #app-container {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background: radial-gradient(circle at center, #111122 0%, #030308 100%);
+        }
+
+        /* The canvas preserves aspect ratio and fits within the window */
+        canvas {
+            display: block;
+            max-width: 100%;
+            max-height: 100%;
+            aspect-ratio: 1 / 1;
+            /* Lift the arena to leave clear space near the bottom for the player's thumb. */
+            transform: translateY(-7vh);
+            box-shadow: 0 0 50px rgba(0,0,0,0.8);
+            background-color: #0a0a1a;
+            z-index: 10;
+        }
+
+        .overlay {
+            position: absolute;
+            inset: 0;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            background: rgba(5, 5, 16, 0.9);
+            backdrop-filter: blur(10px);
+            z-index: 50; 
+            padding: 20px;
+        }
+
+        .hidden { display: none !important; }
+
+        .neon-text {
+            text-transform: uppercase;
+            text-shadow: 0 0 10px currentColor, 0 0 20px currentColor;
+        }
+
+        .mode-btn {
+            width: 100%;
+            max-width: 300px;
+            padding: 12px;
+            margin: 6px 0;
+            border-radius: 8px;
+            font-weight: bold;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            transition: all 0.2s ease;
+            border: 2px solid;
+            background: rgba(0,0,0,0.7);
+            cursor: pointer;
+        }
+
+        .mode-btn:hover {
+            transform: scale(1.05);
+            box-shadow: 0 0 15px currentColor inset, 0 0 15px currentColor;
+        }
+
+        #hud {
+            position: absolute;
+            top: 12px;
+            left: 12px;
+            right: 12px;
+            display: flex;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 6px 12px;
+            pointer-events: none;
+            z-index: 20;
+            font-size: clamp(9px, 2vw, 16px);
+            color: #94a3b8;
+            font-weight: bold;
+            letter-spacing: clamp(0.5px, 0.25vw, 2px);
+            text-shadow: 0 0 5px rgba(0,0,0,0.8);
+        }
+
+        /* Subtle hint for the full-screen controls */
+        #control-hint {
+            position: absolute;
+            bottom: 20px;
+            width: 100%;
+            text-align: center;
+            font-size: 12px;
+            color: rgba(255, 255, 255, 0.3);
+            text-transform: uppercase;
+            letter-spacing: 3px;
+            pointer-events: none;
+            z-index: 20;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 0.2; }
+            50% { opacity: 0.6; }
+        }
+    </style>
+</head>
+<body>
+    <div id="app-container">
+        
+        <div id="hud" class="hidden">
+            <span id="hud-mode">MODE: BALANCED</span>
+            <span id="hud-balls">BALLS: 1</span>
+            <span id="hud-time">TIME: 0:00</span>
+            <span id="hud-best">BEST: 0:00</span>
+        </div>
+
+        <div id="control-hint" class="hidden">Swipe left/right to move your shield · Two-player: top half = Green, bottom half = Red</div>
+
+        <!-- Resolution independent logical canvas -->
+        <canvas id="gameCanvas" width="800" height="800"></canvas>
+
+        <!-- Main Menu Overlay -->
+        <div id="menu-overlay" class="overlay">
+            <h1 class="text-4xl md:text-6xl font-black mb-2 text-white neon-text text-center">Neon<br>Wizards</h1>
+            <p class="text-slate-300 mb-8 max-w-sm text-center text-sm md:text-base">
+                You are the <strong class="text-red-500">RED</strong> Wizard. 
+                <br/><br/>
+                Swipe horizontally to move your shield and protect your core. In two-human mode, the top half controls Green and the bottom half controls Red.
+            </p>
+            <p id="menu-best" class="text-cyan-300 text-sm font-bold mb-4 tracking-widest">PERSONAL BEST: 0:00</p>
+            
+            <div class="flex flex-col items-center w-full">
+                <button class="mode-btn text-blue-400 border-blue-400" data-mode="BALANCED">
+                    Balanced<br><span class="text-xs text-slate-400 font-normal">Standard AI Defense</span>
+                </button>
+                <button class="mode-btn text-red-400 border-red-400" data-mode="AGGRESSIVE">
+                    Aggressive<br><span class="text-xs text-slate-400 font-normal">AI hunts the Human</span>
+                </button>
+                <button class="mode-btn text-purple-400 border-purple-400" data-mode="TRAITOR">
+                    Traitor AI<br><span class="text-xs text-slate-400 font-normal">AI attacks other AI</span>
+                </button>
+                <button class="mode-btn text-cyan-300 border-cyan-300" data-mode="TWO_HUMANS">
+                    Two Humans + Two AI<br><span class="text-xs text-slate-400 font-normal">Co-op: Red bottom, Green top</span>
+                </button>
+            </div>
+        </div>
+
+        <!-- Game Over Overlay -->
+        <div id="gameover-overlay" class="overlay hidden">
+            <h2 id="result-title" class="text-5xl md:text-7xl font-black mb-4 neon-text text-center">GAME OVER</h2>
+            <p id="result-desc" class="text-lg md:text-xl text-slate-300 mb-8 font-bold text-center"></p>
+            <button id="restart-btn" class="px-8 py-4 bg-white text-slate-900 hover:bg-slate-200 font-bold rounded shadow-[0_0_20px_rgba(255,255,255,0.6)] uppercase tracking-widest transition-transform transform hover:scale-105 active:scale-95 cursor-pointer">
+                Return to Menu
+            </button>
+        </div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Logical resolution (Independent of physical screen size)
+        const LOGICAL_SIZE = 800;
+        
+        // Game Constants
+        const CORNER_SIZE = 220; // Corner boundary for paths
+        const PATH_LENGTH = CORNER_SIZE * 2; // Total path a paddle can travel
+        const PADDLE_LENGTH = 110;
+        const PADDLE_THICK = 16;
+        // Survival progression: one ball at the start, then more at 20s, 45s,
+        // and 90s. After that, add one every 30 seconds, up to six balls.
+        const BALL_SPAWN_THRESHOLDS = [20000, 45000, 90000];
+        const LATE_GAME_SPAWN_INTERVAL = 30000;
+        const MAX_BALLS = 6;
+        
+        const COLORS = {
+            0: { primary: '#ef4444', glow: 'rgba(239, 68, 68, 0.8)' },   // RED (Human)
+            1: { primary: '#3b82f6', glow: 'rgba(59, 130, 246, 0.8)' },   // BLUE (AI)
+            2: { primary: '#10b981', glow: 'rgba(16, 185, 129, 0.8)' },   // GREEN (AI)
+            3: { primary: '#eab308', glow: 'rgba(234, 179, 8, 0.8)' }     // YELLOW (AI)
+        };
+
+        // Game State Variables
+        let gameState = 'MENU';
+        let currentMode = 'BALANCED';
+        let lastTime = 0;
+        let animationId;
+        let elapsedGameMs = 0;
+        let nextBallThresholdIndex = 0;
+        let nextLateGameThreshold = 0;
+        let bestSurvivalSeconds = loadBestSurvival();
+
+        let players = [];
+        let bricks = [];
+        let balls = [];
+        let particles = [];
+
+        // Human controls: Red (player 0) uses the lower half; in two-human mode,
+        // Green (player 2) uses the upper half. Each touch keeps its assigned player.
+        const CENTER_P = (PATH_LENGTH - PADDLE_LENGTH) / 2;
+        let humanPaddleTargets = [CENTER_P, CENTER_P, CENTER_P, CENTER_P];
+        let mouseControlPlayer = 0;
+        let mouseLastX = 0;
+        let mouseDragging = false;
+        const activeTouchControls = new Map();
+
+        function loadBestSurvival() {
+            try {
+                return Math.max(0, Number(localStorage.getItem('neonWizardsBestSurvival') || 0));
+            } catch (e) {
+                return 0;
+            }
+        }
+
+        function saveBestSurvival(seconds) {
+            try {
+                localStorage.setItem('neonWizardsBestSurvival', String(seconds));
+            } catch (e) {
+                // The game still works if browser storage is unavailable.
+            }
+        }
+
+        function formatTime(totalSeconds) {
+            const minutes = Math.floor(totalSeconds / 60);
+            const seconds = totalSeconds % 60;
+            return `${minutes}:${String(seconds).padStart(2, '0')}`;
+        }
+
+        function updateBestDisplays() {
+            const bestText = `BEST: ${formatTime(bestSurvivalSeconds)}`;
+            const hudBest = document.getElementById('hud-best');
+            const menuBest = document.getElementById('menu-best');
+            if (hudBest) hudBest.innerText = bestText;
+            if (menuBest) menuBest.innerText = `PERSONAL ${bestText}`;
+        }
+
+        updateBestDisplays();
+
+        function humanForScreenY(clientY) {
+            if (currentMode === 'TWO_HUMANS' && clientY < window.innerHeight / 2) return 2;
+            return 0;
+        }
+
+        function moveHumanControl(playerIdx, deltaX) {
+            if (gameState !== 'PLAYING' || !players[playerIdx] || !players[playerIdx].isHuman) return;
+            const scale = LOGICAL_SIZE / Math.max(1, window.innerWidth);
+            const sensitivityMultiplier = 1.8;
+            humanPaddleTargets[playerIdx] += deltaX * scale * sensitivityMultiplier;
+            humanPaddleTargets[playerIdx] = Math.max(0, Math.min(PATH_LENGTH - PADDLE_LENGTH, humanPaddleTargets[playerIdx]));
+        }
+
+        // Mouse controls (desktop): use the upper/lower screen half in two-human mode.
+        window.addEventListener('mousedown', (e) => {
+            if (e.target.closest('.overlay')) return;
+            if (gameState !== 'PLAYING') return;
+            mouseControlPlayer = humanForScreenY(e.clientY);
+            mouseDragging = true;
+            mouseLastX = e.clientX;
+        });
+        window.addEventListener('mousemove', (e) => {
+            if (!mouseDragging || gameState !== 'PLAYING') return;
+            moveHumanControl(mouseControlPlayer, e.clientX - mouseLastX);
+            mouseLastX = e.clientX;
+        });
+        window.addEventListener('mouseup', () => { mouseDragging = false; });
+        window.addEventListener('mouseleave', () => { mouseDragging = false; });
+
+        // Touch controls support two simultaneous fingers; each finger is assigned
+        // to Red or Green according to where that touch began.
+        window.addEventListener('touchstart', (e) => {
+            if (e.target.closest('.overlay')) return;
+            if (gameState !== 'PLAYING') return;
+            for (const touch of e.changedTouches) {
+                activeTouchControls.set(touch.identifier, {
+                    playerIdx: humanForScreenY(touch.clientY),
+                    lastX: touch.clientX
+                });
+            }
+            e.preventDefault();
+        }, { passive: false });
+        window.addEventListener('touchmove', (e) => {
+            let handled = false;
+            for (const touch of e.changedTouches) {
+                const control = activeTouchControls.get(touch.identifier);
+                if (!control) continue;
+                moveHumanControl(control.playerIdx, touch.clientX - control.lastX);
+                control.lastX = touch.clientX;
+                handled = true;
+            }
+            if (handled) e.preventDefault();
+        }, { passive: false });
+        function finishTouches(e) {
+            for (const touch of e.changedTouches) activeTouchControls.delete(touch.identifier);
+        }
+        window.addEventListener('touchend', finishTouches);
+        window.addEventListener('touchcancel', finishTouches);
+
+        // Map 1D coordinate `p` [0 to PATH_LENGTH] to 2D canvas coordinates along an L-shaped corner
+        function getPathPoint(playerIdx, p) {
+            p = Math.max(0, Math.min(PATH_LENGTH, p));
+            if (playerIdx === 0) { // RED (Bottom-Left)
+                // Moves right, then up
+                return p <= CORNER_SIZE 
+                    ? { x: p, y: LOGICAL_SIZE - CORNER_SIZE } 
+                    : { x: CORNER_SIZE, y: LOGICAL_SIZE - CORNER_SIZE + (p - CORNER_SIZE) };
+            }
+            if (playerIdx === 1) { // BLUE (Top-Left)
+                // Moves right, then down
+                return p <= CORNER_SIZE 
+                    ? { x: p, y: CORNER_SIZE } 
+                    : { x: CORNER_SIZE, y: CORNER_SIZE - (p - CORNER_SIZE) };
+            }
+            if (playerIdx === 2) { // GREEN (Top-Right)
+                // Moves left, then down
+                return p <= CORNER_SIZE 
+                    ? { x: LOGICAL_SIZE - p, y: CORNER_SIZE } 
+                    : { x: LOGICAL_SIZE - CORNER_SIZE, y: CORNER_SIZE - (p - CORNER_SIZE) };
+            }
+            if (playerIdx === 3) { // YELLOW (Bottom-Right)
+                // Moves left, then up
+                return p <= CORNER_SIZE 
+                    ? { x: LOGICAL_SIZE - p, y: LOGICAL_SIZE - CORNER_SIZE } 
+                    : { x: LOGICAL_SIZE - CORNER_SIZE, y: LOGICAL_SIZE - CORNER_SIZE + (p - CORNER_SIZE) };
+            }
+        }
+
+        function getCorePos(playerIdx) {
+            // Player 0 (Red) is deeply embedded at (60, 740)
+            if (playerIdx === 0) return { x: 60, y: LOGICAL_SIZE - 60 }; 
+            if (playerIdx === 1) return { x: 80, y: 80 };
+            if (playerIdx === 2) return { x: LOGICAL_SIZE - 80, y: 80 };
+            if (playerIdx === 3) return { x: LOGICAL_SIZE - 80, y: LOGICAL_SIZE - 80 };
+        }
+
+        function initGame() {
+            players = [];
+            bricks = [];
+            balls = [];
+            particles = [];
+            elapsedGameMs = 0;
+            nextBallThresholdIndex = 0;
+            nextLateGameThreshold = 120000;
+            
+            // Reset player input
+            humanPaddleTargets = [CENTER_P, CENTER_P, CENTER_P, CENTER_P];
+            mouseDragging = false;
+            activeTouchControls.clear();
+
+            for (let i = 0; i < 4; i++) {
+                players.push({
+                    id: i,
+                    alive: true,
+                    isHuman: currentMode === 'TWO_HUMANS' ? (i === 0 || i === 2) : i === 0,
+                    color: COLORS[i],
+                    core: getCorePos(i),
+                    coreRadius: 28,
+                    p: (PATH_LENGTH - PADDLE_LENGTH) / 2,
+                    targetP: (PATH_LENGTH - PADDLE_LENGTH) / 2
+                });
+            }
+
+            // Build a matching destructible brick wall in every player's corner.
+            // Each wall uses that player's color and leaves a clear ring around the core.
+            const bw = 24, bh = 24, brickStep = 26;
+            for (const player of players) {
+                const startX = (player.id === 0 || player.id === 1) ? 0 : LOGICAL_SIZE - CORNER_SIZE;
+                const startY = (player.id === 0 || player.id === 3) ? LOGICAL_SIZE - CORNER_SIZE : 0;
+                const corePos = player.core;
+                for (let x = startX; x <= startX + CORNER_SIZE - bw; x += brickStep) {
+                    for (let y = startY; y <= startY + CORNER_SIZE - bh; y += brickStep) {
+                        const distToCore = Math.hypot((x + bw / 2) - corePos.x, (y + bh / 2) - corePos.y);
+                        if (distToCore > 65 && distToCore < 185) {
+                            bricks.push({ x, y, w: bw, h: bh, active: true, ownerId: player.id });
+                        }
+                    }
+                }
+            }
+
+            spawnBall();
+
+            // Toggle Overlays
+            document.getElementById('menu-overlay').classList.add('hidden');
+            document.getElementById('gameover-overlay').classList.add('hidden');
+            document.getElementById('hud').classList.remove('hidden');
+            document.getElementById('control-hint').classList.remove('hidden');
+            document.getElementById('hud-time').innerText = 'TIME: 0:00';
+            updateBestDisplays();
+            
+            gameState = 'PLAYING';
+            lastTime = performance.now();
+            if (animationId) cancelAnimationFrame(animationId);
+            animationLoop(lastTime);
+        }
+
+        function spawnBall() {
+            let angle = Math.random() * Math.PI * 2;
+            // Filter out angles that are too flat along X or Y axes
+            while(Math.abs(Math.cos(angle)) < 0.25 || Math.abs(Math.sin(angle)) < 0.25) {
+                angle = Math.random() * Math.PI * 2;
+            }
+            balls.push({
+                x: LOGICAL_SIZE / 2,
+                y: LOGICAL_SIZE / 2,
+                vx: Math.cos(angle) * 7,
+                vy: Math.sin(angle) * 7,
+                radius: 9,
+                maxSpeed: 16
+            });
+            document.getElementById('hud-balls').innerText = `BALLS: ${balls.length}`;
+            spawnParticles(LOGICAL_SIZE / 2, LOGICAL_SIZE / 2, '#ffffff', 25, 2.5);
+        }
+
+        function spawnParticles(x, y, color, count, speed = 1) {
+            for (let i = 0; i < count; i++) {
+                let angle = Math.random() * Math.PI * 2;
+                let s = Math.random() * 5 * speed;
+                particles.push({
+                    x: x, y: y,
+                    vx: Math.cos(angle) * s,
+                    vy: Math.sin(angle) * s,
+                    life: 1.0,
+                    decay: Math.random() * 0.04 + 0.01,
+                    color: color,
+                    size: Math.random() * 5 + 2
+                });
+            }
+        }
+
+        function updateAI(dt) {
+            let aiSpeed = 7.5 * (dt / 16);
+
+            players.forEach(p => {
+                if (p.isHuman || !p.alive) return;
+                
+                let targetBall = null;
+                let minThreat = Infinity;
+                let activeBalls = balls.filter(b => true);
+                
+                if (activeBalls.length === 0) return;
+
+                activeBalls.forEach(b => {
+                    let distToSelf = Math.hypot(b.x - p.core.x, b.y - p.core.y);
+                    
+                    if (currentMode === 'BALANCED' || currentMode === 'TWO_HUMANS') {
+                        if (distToSelf < minThreat) { minThreat = distToSelf; targetBall = b; }
+                    } 
+                    else if (currentMode === 'AGGRESSIVE') {
+                        // AI wants to hit balls toward the human core
+                        let distToHuman = Math.hypot(b.x - players[0].core.x, b.y - players[0].core.y);
+                        if (distToHuman < minThreat) { minThreat = distToHuman; targetBall = b; }
+                    }
+                    else if (currentMode === 'TRAITOR') {
+                        // AI wants to cause chaos in the middle/other AI bases
+                        let distToCenter = Math.hypot(b.x - LOGICAL_SIZE/2, b.y - LOGICAL_SIZE/2);
+                        if (distToCenter < minThreat) { minThreat = distToCenter; targetBall = b; }
+                    }
+                });
+
+                if (targetBall) {
+                    let bestP = 0;
+                    let minDistToBall = Infinity;
+                    
+                    // Scan the path to find the closest point to the target ball
+                    for (let testP = 0; testP <= PATH_LENGTH; testP += 15) {
+                        let pt = getPathPoint(p.id, testP);
+                        let dist = Math.hypot(pt.x - targetBall.x, pt.y - targetBall.y);
+                        if (dist < minDistToBall) {
+                            minDistToBall = dist;
+                            bestP = testP;
+                        }
+                    }
+
+                    // Move Paddle
+                    p.targetP = Math.max(0, Math.min(PATH_LENGTH - PADDLE_LENGTH, bestP - PADDLE_LENGTH / 2));
+                    let diff = p.targetP - p.p;
+                    if (Math.abs(diff) > aiSpeed) {
+                        p.p += Math.sign(diff) * aiSpeed;
+                    } else {
+                        p.p = p.targetP;
+                    }
+                }
+            });
+        }
+
+        function getClosestPointOnSegment(a, b, pt) {
+            let ab = { x: b.x - a.x, y: b.y - a.y };
+            let lenSq = ab.x * ab.x + ab.y * ab.y;
+            if (lenSq === 0) return a;
+            let t = ((pt.x - a.x) * ab.x + (pt.y - a.y) * ab.y) / lenSq;
+            t = Math.max(0, Math.min(1, t));
+            return { x: a.x + t * ab.x, y: a.y + t * ab.y };
+        }
+
+        function checkCollisions() {
+            for (let i = balls.length - 1; i >= 0; i--) {
+                let ball = balls[i];
+
+                // Boundary Bounce
+                if (ball.x < ball.radius) { ball.x = ball.radius; ball.vx *= -1; spawnParticles(ball.x, ball.y, '#fff', 5); }
+                else if (ball.x > LOGICAL_SIZE - ball.radius) { ball.x = LOGICAL_SIZE - ball.radius; ball.vx *= -1; spawnParticles(ball.x, ball.y, '#fff', 5); }
+                if (ball.y < ball.radius) { ball.y = ball.radius; ball.vy *= -1; spawnParticles(ball.x, ball.y, '#fff', 5); }
+                else if (ball.y > LOGICAL_SIZE - ball.radius) { ball.y = LOGICAL_SIZE - ball.radius; ball.vy *= -1; spawnParticles(ball.x, ball.y, '#fff', 5); }
+
+                // Paddle Reflection
+                players.forEach(player => {
+                    if (!player.alive) return;
+
+                    let pStart = player.p;
+                    let pEnd = player.p + PADDLE_LENGTH;
+                    let segments = [];
+                    let pt1 = getPathPoint(player.id, pStart);
+                    let pt2 = getPathPoint(player.id, pEnd);
+
+                    // Check if paddle bridges the corner
+                    if (pStart < CORNER_SIZE && pEnd > CORNER_SIZE) {
+                        let corner = getPathPoint(player.id, CORNER_SIZE);
+                        segments.push({ a: pt1, b: corner });
+                        segments.push({ a: corner, b: pt2 });
+                    } else {
+                        segments.push({ a: pt1, b: pt2 });
+                    }
+
+                    for (let seg of segments) {
+                        let closest = getClosestPointOnSegment(seg.a, seg.b, ball);
+                        let dist = Math.hypot(ball.x - closest.x, ball.y - closest.y);
+
+                        if (dist < ball.radius + PADDLE_THICK / 2) {
+                            // Treat each shield as one-sided: only its arena-facing
+                            // surface can deflect a ball. This prevents a paddle from
+                            // bouncing a ball backward into its own wizard's core.
+                            const midX = (seg.a.x + seg.b.x) / 2;
+                            const midY = (seg.a.y + seg.b.y) / 2;
+                            const towardCenterX = LOGICAL_SIZE / 2 - midX;
+                            const towardCenterY = LOGICAL_SIZE / 2 - midY;
+                            let nx, ny;
+                            if (Math.abs(seg.b.x - seg.a.x) >= Math.abs(seg.b.y - seg.a.y)) {
+                                // Horizontal segment: its front normal points up or down.
+                                nx = 0;
+                                ny = Math.sign(towardCenterY) || 1;
+                            } else {
+                                // Vertical segment: its front normal points left or right.
+                                nx = Math.sign(towardCenterX) || 1;
+                                ny = 0;
+                            }
+
+                            const side = (ball.x - closest.x) * nx + (ball.y - closest.y) * ny;
+                            const dot = ball.vx * nx + ball.vy * ny;
+
+                            // Ignore contact from the back face, and only reflect
+                            // when the ball is travelling into the front face.
+                            if (side >= -1 && dot < 0) {
+                                const overlap = (ball.radius + PADDLE_THICK / 2) - dist;
+                                ball.x += nx * (overlap + 0.5);
+                                ball.y += ny * (overlap + 0.5);
+
+                                const currentSpeed = Math.hypot(ball.vx, ball.vy);
+                                const newSpeed = Math.min(currentSpeed * 1.04, ball.maxSpeed);
+                                ball.vx = (ball.vx - 2 * dot * nx) / currentSpeed * newSpeed;
+                                ball.vy = (ball.vy - 2 * dot * ny) / currentSpeed * newSpeed;
+
+                                // Add slight noise to avoid rigid vertical/horizontal loops.
+                                const noise = (Math.random() - 0.5) * 0.25;
+                                const ang = Math.atan2(ball.vy, ball.vx) + noise;
+                                ball.vx = Math.cos(ang) * newSpeed;
+                                ball.vy = Math.sin(ang) * newSpeed;
+
+                                spawnParticles(closest.x, closest.y, player.color.primary, 15, 1.5);
+                            }
+                        }
+                    }
+                });
+
+                // Brick Destruction (Red Human Player Only)
+                for (let b = bricks.length - 1; b >= 0; b--) {
+                    let br = bricks[b];
+                    if (!br.active) continue;
+
+                    let nearX = Math.max(br.x, Math.min(ball.x, br.x + br.w));
+                    let nearY = Math.max(br.y, Math.min(ball.y, br.y + br.h));
+                    let dx = ball.x - nearX;
+                    let dy = ball.y - nearY;
+
+                    if (dx * dx + dy * dy < ball.radius * ball.radius) {
+                        br.active = false;
+                        spawnParticles(br.x + br.w/2, br.y + br.h/2, COLORS[br.ownerId ?? 0].primary, 10);
+
+                        let overlapL = ball.x + ball.radius - br.x;
+                        let overlapR = br.x + br.w - (ball.x - ball.radius);
+                        let overlapT = ball.y + ball.radius - br.y;
+                        let overlapB = br.y + br.h - (ball.y - ball.radius);
+                        let minOverlap = Math.min(overlapL, overlapR, overlapT, overlapB);
+
+                        if (minOverlap === overlapL || minOverlap === overlapR) ball.vx *= -1;
+                        else ball.vy *= -1;
+                        
+                        break; // Destroy max 1 brick per frame
+                    }
+                }
+
+                // Core Annihilation Check
+                players.forEach(player => {
+                    if (!player.alive) return;
+                    let dx = ball.x - player.core.x;
+                    let dy = ball.y - player.core.y;
+                    
+                    if (Math.hypot(dx, dy) < ball.radius + player.coreRadius) {
+                        player.alive = false;
+                        spawnParticles(player.core.x, player.core.y, '#ffffff', 120, 6);
+                        spawnParticles(player.core.x, player.core.y, player.color.primary, 100, 4);
+                        
+                        // Remove only the fallen wizard's remaining wall.
+                        bricks.forEach(br => { if (br.ownerId === player.id) br.active = false; });
+
+                        balls.splice(i, 1);
+                        checkWinCondition();
+                    }
+                });
+            }
+        }
+
+        function checkWinCondition() {
+            const humanAliveCount = players.filter(p => p.isHuman && p.alive).length;
+            const aiAliveCount = players.filter(p => !p.isHuman && p.alive).length;
+            const humansWon = humanAliveCount > 0;
+
+            if (humanAliveCount === 0 || aiAliveCount === 0) {
+                gameState = 'GAMEOVER';
+                
+                const overlay = document.getElementById('gameover-overlay');
+                const title = document.getElementById('result-title');
+                const desc = document.getElementById('result-desc');
+                
+                document.getElementById('hud').classList.add('hidden');
+                document.getElementById('control-hint').classList.add('hidden');
+                
+                const survivalTime = Math.floor(elapsedGameMs / 1000);
+                const isNewBest = survivalTime > bestSurvivalSeconds;
+                if (isNewBest) {
+                    bestSurvivalSeconds = survivalTime;
+                    saveBestSurvival(bestSurvivalSeconds);
+                }
+                updateBestDisplays();
+
+                if (humansWon) {
+                    title.innerText = "VICTORY";
+                    title.style.color = "#10b981";
+                    desc.innerText = `${currentMode === 'TWO_HUMANS' ? 'The human team' : 'You'} survived the arena for ${formatTime(survivalTime)}!${isNewBest ? ' NEW PERSONAL BEST!' : ''}`;
+                } else {
+                    title.innerText = "DEFEAT";
+                    title.style.color = "#ef4444";
+                    desc.innerText = `The human team was eliminated after ${formatTime(survivalTime)}.${isNewBest ? ' NEW PERSONAL BEST!' : ''}`;
+                }
+                
+                setTimeout(() => overlay.classList.remove('hidden'), 1200);
+            }
+        }
+
+        function animationLoop(timestamp) {
+            let dt = timestamp - lastTime;
+            lastTime = timestamp;
+
+            if (gameState === 'PLAYING') {
+                // Apply human target paddle locations smoothly (Lerp).
+                players.forEach(p => {
+                    if (p.isHuman) p.p += (humanPaddleTargets[p.id] - p.p) * 0.4;
+                });
+
+                updateAI(dt);
+                
+                // Survival progression: introduce extra balls at clear milestones,
+                // then keep raising the pressure gradually in the late game.
+                elapsedGameMs += dt;
+                while (nextBallThresholdIndex < BALL_SPAWN_THRESHOLDS.length &&
+                       elapsedGameMs >= BALL_SPAWN_THRESHOLDS[nextBallThresholdIndex] &&
+                       balls.length < MAX_BALLS) {
+                    spawnBall();
+                    nextBallThresholdIndex++;
+                }
+                while (nextBallThresholdIndex >= BALL_SPAWN_THRESHOLDS.length &&
+                       elapsedGameMs >= nextLateGameThreshold && balls.length < MAX_BALLS) {
+                    spawnBall();
+                    nextLateGameThreshold += LATE_GAME_SPAWN_INTERVAL;
+                }
+                document.getElementById('hud-time').innerText = `TIME: ${formatTime(Math.floor(elapsedGameMs / 1000))}`;
+                document.getElementById('hud-balls').innerText = `BALLS: ${balls.length}`;
+
+                // Move balls
+                balls.forEach(ball => {
+                    ball.x += ball.vx * (dt / 16);
+                    ball.y += ball.vy * (dt / 16);
+                    if (Math.random() > 0.4) {
+                        particles.push({
+                            x: ball.x, y: ball.y,
+                            vx: 0, vy: 0, life: 1.0, decay: 0.1,
+                            color: '#fff', size: ball.radius * 0.7
+                        });
+                    }
+                });
+                
+                checkCollisions();
+            }
+
+            // Animate Particles
+            for (let i = particles.length - 1; i >= 0; i--) {
+                let p = particles[i];
+                p.x += p.vx * (dt/16);
+                p.y += p.vy * (dt/16);
+                p.life -= p.decay * (dt/16);
+                p.size *= 0.94;
+                if (p.life <= 0 || p.size < 0.5) particles.splice(i, 1);
+            }
+
+            draw();
+            
+            if (gameState === 'PLAYING' || particles.length > 0) {
+                animationId = requestAnimationFrame(animationLoop);
+            }
+        }
+
+        function draw() {
+            ctx.clearRect(0, 0, LOGICAL_SIZE, LOGICAL_SIZE);
+
+            // Arena Background Grid
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.03)';
+            ctx.lineWidth = 1;
+            for (let i = 0; i <= LOGICAL_SIZE; i += 40) {
+                ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i, LOGICAL_SIZE); ctx.stroke();
+                ctx.beginPath(); ctx.moveTo(0, i); ctx.lineTo(LOGICAL_SIZE, i); ctx.stroke();
+            }
+
+            // Render Bricks
+            bricks.forEach(br => {
+                if (!br.active) return;
+                const brickColor = COLORS[br.ownerId ?? 0];
+                ctx.fillStyle = brickColor.primary;
+                ctx.shadowColor = brickColor.glow;
+                ctx.shadowBlur = 8;
+                ctx.fillRect(br.x, br.y, br.w - 2, br.h - 2);
+            });
+            ctx.shadowBlur = 0;
+
+            // Render Player Cores
+            players.forEach(p => {
+                let c = p.core;
+                if (!p.alive) {
+                    ctx.fillStyle = '#1e1e2f';
+                    ctx.beginPath(); ctx.arc(c.x, c.y, p.coreRadius, 0, Math.PI*2); ctx.fill();
+                    return;
+                }
+                
+                let pulse = Math.sin(Date.now() * 0.005) * 5 + (p.coreRadius - 6);
+                ctx.fillStyle = p.color.primary;
+                ctx.shadowColor = p.color.glow;
+                ctx.shadowBlur = 25;
+                
+                ctx.beginPath();
+                ctx.moveTo(c.x, c.y - pulse);
+                ctx.lineTo(c.x + pulse, c.y);
+                ctx.lineTo(c.x, c.y + pulse);
+                ctx.lineTo(c.x - pulse, c.y);
+                ctx.closePath();
+                ctx.fill();
+                
+                ctx.fillStyle = '#fff';
+                ctx.beginPath(); ctx.arc(c.x, c.y, 6, 0, Math.PI*2); ctx.fill();
+            });
+            ctx.shadowBlur = 0;
+
+            // Render Deflecting Shields (Paddles)
+            ctx.lineCap = 'round';
+            ctx.lineJoin = 'round';
+            players.forEach(p => {
+                if (!p.alive) return;
+                
+                ctx.lineWidth = PADDLE_THICK;
+                ctx.strokeStyle = '#ffffff'; 
+                ctx.shadowColor = p.color.glow;
+                ctx.shadowBlur = 20;
+
+                let pt1 = getPathPoint(p.id, p.p);
+                let pt2 = getPathPoint(p.id, p.p + PADDLE_LENGTH);
+
+                ctx.beginPath();
+                ctx.moveTo(pt1.x, pt1.y);
+                if (p.p < CORNER_SIZE && p.p + PADDLE_LENGTH > CORNER_SIZE) {
+                    let corner = getPathPoint(p.id, CORNER_SIZE);
+                    ctx.lineTo(corner.x, corner.y);
+                }
+                ctx.lineTo(pt2.x, pt2.y);
+                ctx.stroke();
+
+                ctx.lineWidth = PADDLE_THICK - 6;
+                ctx.strokeStyle = p.color.primary;
+                ctx.stroke();
+            });
+            ctx.shadowBlur = 0;
+
+            // Render Particle Effects
+            particles.forEach(p => {
+                ctx.globalAlpha = Math.max(0, p.life);
+                ctx.fillStyle = p.color;
+                ctx.beginPath(); ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2); ctx.fill();
+            });
+            ctx.globalAlpha = 1.0;
+
+            // Render Energy Balls
+            balls.forEach(ball => {
+                ctx.fillStyle = '#ffffff';
+                ctx.shadowColor = '#ffffff';
+                ctx.shadowBlur = 15;
+                ctx.beginPath(); ctx.arc(ball.x, ball.y, ball.radius, 0, Math.PI * 2); ctx.fill();
+            });
+            ctx.shadowBlur = 0;
+        }
+
+        // Attach Setup Listeners
+        document.querySelectorAll('.mode-btn').forEach(btn => {
+            const startHandler = (e) => {
+                e.preventDefault();
+                currentMode = btn.getAttribute('data-mode');
+                document.getElementById('hud-mode').innerText = currentMode === 'TWO_HUMANS' ? 'MODE: 2 HUMANS + 2 AI' : `MODE: ${currentMode}`;
+                initGame();
+            };
+            btn.addEventListener('click', startHandler);
+            btn.addEventListener('touchend', startHandler);
+        });
+
+        const restartBtn = document.getElementById('restart-btn');
+        const returnMenuHandler = (e) => {
+            e.preventDefault();
+            document.getElementById('gameover-overlay').classList.add('hidden');
+            document.getElementById('menu-overlay').classList.remove('hidden');
+            gameState = 'MENU';
+            ctx.clearRect(0, 0, LOGICAL_SIZE, LOGICAL_SIZE);
+            draw();
+        };
+        restartBtn.addEventListener('click', returnMenuHandler);
+        restartBtn.addEventListener('touchend', returnMenuHandler);
+
+        // Pre-render state
+        draw();
+    </script>
+</body>
+</html>
